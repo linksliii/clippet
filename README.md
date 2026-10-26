@@ -135,6 +135,15 @@ swift build
 .build/debug/Clippet --cycle 180     # 面板反复开合的泄漏检查
 ```
 
+## 发布流程
+
+```bash
+./release.sh "提交说明"
+```
+
+依次完成：跑测试 → release 构建 → 打包 `.app.zip` → 提交 → 推送 → 上传到对应的 GitHub Release。
+版本号取自 `build.sh` 的 `CFBundleShortVersionString`，改版本只需改那一处。
+
 ## 隐私
 
 所有内容仅存于 `~/Library/Application Support/Clippet/clippet.db`。无网络请求、无遥测、无账号、不上传任何数据。
