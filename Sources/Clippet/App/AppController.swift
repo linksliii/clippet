@@ -32,6 +32,7 @@ final class AppController: NSObject, NSWindowDelegate {
 
     private let settings = AppSettings.shared
     private var settingsWindow: NSWindow?
+    private var hotKeyActivity: NSObjectProtocol?
 
     init(repository: Repository) {
         self.repository = repository
@@ -76,6 +77,12 @@ final class AppController: NSObject, NSWindowDelegate {
         setupHotKeys()
         wireViewModel()
         wireMonitor()
+
+        // Keep the agent out of App Nap: the panel is opened from a global
+        // hotkey, and waking a throttled process makes the first show late.
+        hotKeyActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Clipboard panel opens from a global hotkey")
 
         applyRetention()
         viewModel.reloadBoards()
@@ -191,6 +198,10 @@ final class AppController: NSObject, NSWindowDelegate {
     }
 
     func stop() {
+        if let hotKeyActivity {
+            ProcessInfo.processInfo.endActivity(hotKeyActivity)
+            self.hotKeyActivity = nil
+        }
         monitor.stop()
         hotKeys.unregisterAll()
         if let monitorRef = keyMonitor {
