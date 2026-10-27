@@ -29,6 +29,8 @@ final class AppController: NSObject, NSWindowDelegate {
     private var visibleSince: Date?
 
     private var targetApp: NSRunningApplication?
+    private var lastForeignApp: NSRunningApplication?
+    private var workspaceObserver: NSObjectProtocol?
 
     private let settings = AppSettings.shared
     private var settingsWindow: NSWindow?
@@ -113,7 +115,19 @@ final class AppController: NSObject, NSWindowDelegate {
             selector: #selector(screenParametersDidChange),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil)
+
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main) { [weak self] note in
+                guard let self = self,
+                      let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      !app.isTerminated,
+                      app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+                self.lastForeignApp = app
+            }
         monitor.start()
+        PasteDebug.log("launch trusted=\(PasteboardWriter.canSendKeystrokes) path=\(Bundle.main.bundlePath)")
 
         if !PasteboardWriter.canSendKeystrokes {
             NSLog("Clippet: accessibility permission not granted; pasting will not work until enabled")
@@ -211,6 +225,10 @@ final class AppController: NSObject, NSWindowDelegate {
         if let mouseRef = mouseMonitor {
             NSEvent.removeMonitor(mouseRef)
             mouseMonitor = nil
+        }
+        if let workspaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
+            self.workspaceObserver = nil
         }
         NotificationCenter.default.removeObserver(self)
     }
@@ -384,9 +402,13 @@ final class AppController: NSObject, NSWindowDelegate {
         guard !isPanelVisible else { return }
 
         let frontmost = NSWorkspace.shared.frontmostApplication
-        if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
+        if let frontmost = frontmost,
+           frontmost.bundleIdentifier != Bundle.main.bundleIdentifier {
             targetApp = frontmost
+        } else if let lastForeignApp = lastForeignApp {
+            targetApp = lastForeignApp
         }
+        PasteDebug.log("show front=\(frontmost?.localizedName ?? "nil") last=\(lastForeignApp?.localizedName ?? "nil") target=\(targetApp?.localizedName ?? "nil")")
 
         ensureMainMenu()
         NSApp.activate(ignoringOtherApps: true)
@@ -475,6 +497,7 @@ final class AppController: NSObject, NSWindowDelegate {
             self?.isAnimatingOut = false
             ImageStore.purgeFullSize()
             self?.scheduleIdleCleanup()
+            PasteDebug.log("panel ordered out")
             completion?()
         })
     }
@@ -1034,6 +1057,8 @@ final class AppController: NSObject, NSWindowDelegate {
 
     private func pasteSingle(_ item: ClipItem) {
         let plainText = settings.alwaysPlainText || NSEvent.modifierFlags.contains(.option)
+        let destination = targetApp ?? lastForeignApp
+        PasteDebug.log("commit item=\(item.id) kind=\(item.kind) plain=\(plainText) active=\(settings.pasteToActiveApp) target=\(destination?.localizedName ?? "nil") trusted=\(PasteboardWriter.canSendKeystrokes)")
 
         guard settings.pasteToActiveApp else {
             try? PasteboardWriter.write(item, plainTextOnly: plainText)
@@ -1046,7 +1071,8 @@ final class AppController: NSObject, NSWindowDelegate {
         // posting ⌘V while the panel is still key sends it to the wrong window.
         hidePanel { [weak self] in
             guard let self = self else { return }
-            PasteboardWriter.paste(item, into: self.targetApp, plainTextOnly: plainText)
+            PasteDebug.log("hide done, pasting")
+            PasteboardWriter.paste(item, into: destination, plainTextOnly: plainText)
             self.monitor.suppressCurrentState()
         }
     }

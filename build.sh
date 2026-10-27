@@ -62,7 +62,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-echo "==> signing (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP" 2>&1 | tail -2
+IDENTITY="${CODESIGN_IDENTITY:--}"
+if [[ "$IDENTITY" == "-" ]]; then
+    echo "==> signing (ad-hoc)"
+else
+    echo "==> signing ($IDENTITY)"
+fi
+codesign --force --sign "$IDENTITY" --timestamp=none "$APP" 2>&1 | tail -2
 
 echo "==> done: $APP"
