@@ -85,7 +85,6 @@ enum PasteboardWriter {
     }
 
     static func sendPaste() {
-        PasteDebug.log("sendPaste trusted=\(canSendKeystrokes)")
         guard canSendKeystrokes else {
             NSLog("Clippet: accessibility permission missing; cannot send ⌘V")
             requestAccessibility()
@@ -99,7 +98,6 @@ enum PasteboardWriter {
         up?.flags = .maskCommand
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
-        PasteDebug.log("posted ⌘V")
     }
 
     static func paste(_ item: ClipItem,
@@ -108,23 +106,18 @@ enum PasteboardWriter {
                       completion: (() -> Void)? = nil) {
         do {
             try write(item, plainTextOnly: plainTextOnly)
-            PasteDebug.log("write ok kind=\(item.kind)")
         } catch {
             NSLog("Clippet: write failed: \(error)")
-            PasteDebug.log("write failed: \(error)")
             completion?()
             return
         }
         guard let app = app, !app.isTerminated else {
-            PasteDebug.log("paste skipped: no target app")
             completion?()
             return
         }
-        PasteDebug.log("activating target=\(app.localizedName ?? "nil") pid=\(app.processIdentifier) trusted=\(canSendKeystrokes)")
         activate(app)
         waitUntilFrontmost(app, timeout: 0.8) {
             let front = NSWorkspace.shared.frontmostApplication
-            PasteDebug.log("frontmost screen=\(front?.localizedName ?? "nil") active=\(app.isActive)")
             guard front?.processIdentifier == app.processIdentifier else {
                 completion?()
                 return

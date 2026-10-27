@@ -128,7 +128,6 @@ final class AppController: NSObject, NSWindowDelegate {
                 self.lastForeignApp = app
             }
         monitor.start()
-        PasteDebug.log("launch trusted=\(PasteboardWriter.canSendKeystrokes) path=\(Bundle.main.bundlePath)")
 
         if !PasteboardWriter.canSendKeystrokes {
             NSLog("Clippet: accessibility permission not granted; pasting will not work until enabled")
@@ -412,7 +411,6 @@ final class AppController: NSObject, NSWindowDelegate {
         } else if let lastForeignApp = lastForeignApp {
             targetApp = lastForeignApp
         }
-        PasteDebug.log("show front=\(frontmost?.localizedName ?? "nil") last=\(lastForeignApp?.localizedName ?? "nil") target=\(targetApp?.localizedName ?? "nil")")
 
         ensureMainMenu()
         NSApp.activate(ignoringOtherApps: true)
@@ -493,7 +491,6 @@ final class AppController: NSObject, NSWindowDelegate {
             p.alphaValue = 1.0
             ImageStore.purgeFullSize()
             scheduleIdleCleanup()
-            PasteDebug.log("panel ordered out (instant)")
             completion?()
             return
         }
@@ -512,7 +509,6 @@ final class AppController: NSObject, NSWindowDelegate {
             self?.isAnimatingOut = false
             ImageStore.purgeFullSize()
             self?.scheduleIdleCleanup()
-            PasteDebug.log("panel ordered out")
             completion?()
         })
     }
@@ -1080,7 +1076,6 @@ final class AppController: NSObject, NSWindowDelegate {
     private func pasteSingle(_ item: ClipItem) {
         let plainText = settings.alwaysPlainText || NSEvent.modifierFlags.contains(.option)
         let destination = targetApp ?? lastForeignApp
-        PasteDebug.log("commit item=\(item.id) kind=\(item.kind) plain=\(plainText) active=\(settings.pasteToActiveApp) target=\(destination?.localizedName ?? "nil") trusted=\(PasteboardWriter.canSendKeystrokes)")
 
         guard settings.pasteToActiveApp else {
             try? PasteboardWriter.write(item, plainTextOnly: plainText)
@@ -1093,7 +1088,6 @@ final class AppController: NSObject, NSWindowDelegate {
         // posting ⌘V while the panel is still key sends it to the wrong window.
         hidePanel(animated: false) { [weak self] in
             guard let self = self else { return }
-            PasteDebug.log("hide done, pasting")
             PasteboardWriter.paste(item, into: destination, plainTextOnly: plainText)
             self.monitor.suppressCurrentState()
         }
