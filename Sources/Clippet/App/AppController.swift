@@ -211,6 +211,9 @@ final class AppController: NSObject, NSWindowDelegate {
         viewModel.onClose = { [weak self] in
             self?.hidePanel()
         }
+        viewModel.onCardFramesChange = { [weak self] in
+            self?.repositionPreview()
+        }
         viewModel.stackEnabled = stack.isEnabled
         stack.onChange = { [weak self] in
             guard let self = self else { return }
@@ -600,26 +603,48 @@ final class AppController: NSObject, NSWindowDelegate {
             return p
         }()
 
-        let anchor = previewAnchor(for: item, in: container)
-        if popover.isShown { popover.close() }
-        popover.show(relativeTo: anchor, of: container, preferredEdge: .maxY)
+        if popover.isShown {
+            if let anchor = cardAnchor(for: item, in: container) {
+                popover.positioningRect = anchor
+            }
+        } else {
+            popover.show(relativeTo: previewAnchor(for: item, in: container),
+                         of: container,
+                         preferredEdge: .maxY)
+        }
     }
 
     /// The selected card's rect in the panel content view, so the popover arrow
-    /// lands on the item. Falls back to the panel's top edge before the first
-    /// layout pass has reported card frames.
-    private func previewAnchor(for item: ClipItem, in container: NSView) -> NSRect {
+    /// lands on the item.
+    private func cardAnchor(for item: ClipItem, in container: NSView) -> NSRect? {
         let index = viewModel.items.firstIndex { $0.id == item.id } ?? viewModel.selection
-        if let card = viewModel.cardFrames[index], card.width > 1, card.height > 1 {
-            return NSRect(x: card.minX,
-                          y: container.bounds.height - card.maxY,
-                          width: card.width,
-                          height: card.height)
+        guard let card = viewModel.cardFrames[index], card.width > 1, card.height > 1 else {
+            return nil
         }
-        return NSRect(x: container.bounds.midX - 40,
+        return NSRect(x: card.minX,
+                      y: container.bounds.height - card.maxY,
+                      width: card.width,
+                      height: card.height)
+    }
+
+    /// Falls back to the panel's top edge before the first layout pass has
+    /// reported card frames.
+    private func previewAnchor(for item: ClipItem, in container: NSView) -> NSRect {
+        cardAnchor(for: item, in: container)
+            ?? NSRect(x: container.bounds.midX - 40,
                       y: container.bounds.height - 8,
                       width: 80,
                       height: 8)
+    }
+
+    /// Keeps the popover on the selected card while the card row scrolls.
+    private func repositionPreview() {
+        guard let popover = previewPopover, popover.isShown,
+              let panel = panel, panel.isVisible,
+              let container = panel.contentView,
+              let item = viewModel.previewItem,
+              let anchor = cardAnchor(for: item, in: container) else { return }
+        popover.positioningRect = anchor
     }
 
     private func hidePreview() {
@@ -675,6 +700,12 @@ final class AppController: NSObject, NSWindowDelegate {
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
+        // While previewing, up/down move the selection and the popover follows.
+        if viewModel.previewItem != nil, event.keyCode == 125 || event.keyCode == 126 {
+            viewModel.moveSelection(event.keyCode == 126 ? -1 : 1)
+            return true
+        }
+
         let context = KeyContext(previewOpen: viewModel.previewItem != nil,
                                  filtersOpen: viewModel.filtersOpen,
                                  queryEmpty: viewModel.query.isEmpty,

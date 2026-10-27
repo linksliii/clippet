@@ -61,6 +61,7 @@ final class ClipboardViewModel: ObservableObject {
     var onClose: (() -> Void)?
 
     var cardFrames: [Int: CGRect] = [:]
+    var onCardFramesChange: (() -> Void)?
 
     private let repo: Repository
     private var suppressReload = false
@@ -273,6 +274,7 @@ final class ClipboardViewModel: ObservableObject {
         guard !items.isEmpty else { return }
         isNavigating = true
         selection = min(max(0, selection + delta), items.count - 1)
+        if previewItem != nil { previewItem = items[selection] }
     }
 
     func jump(to index: Int) {

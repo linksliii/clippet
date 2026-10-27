@@ -7,6 +7,7 @@ struct PreviewHost: View {
     var body: some View {
         if let item = model.previewItem {
             PreviewOverlay(item: item) { model.previewItem = nil }
+                .id(item.id)
         } else {
             Color.clear
         }

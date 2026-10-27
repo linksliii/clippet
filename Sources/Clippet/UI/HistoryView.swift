@@ -330,6 +330,7 @@ struct HistoryView: View {
             }
             .onPreferenceChange(CardFramesKey.self) { frames in
                 model.cardFrames = frames
+                model.onCardFramesChange?()
                 if CommandLine.arguments.contains("--log-frames") {
                     let ordered = frames.sorted { $0.key < $1.key }.map {
                         "[\($0.key)] x=\(Int($0.value.minX)) y=\(Int($0.value.minY)) w=\(Int($0.value.width)) h=\(Int($0.value.height))"
