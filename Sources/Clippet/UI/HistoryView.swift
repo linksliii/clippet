@@ -343,7 +343,11 @@ struct HistoryView: View {
                 guard newValue >= 0, newValue < model.items.count else { return }
 
                 if model.isWheelScrolling {
-                    proxy.scrollTo(model.items[newValue].id)
+                    // Match the damping of the native horizontal scroll
+                    // instead of jumping to the card.
+                    withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.86)) {
+                        proxy.scrollTo(model.items[newValue].id)
+                    }
                 } else {
                     withAnimation(.easeOut(duration: 0.12)) {
                         proxy.scrollTo(model.items[newValue].id)

@@ -14,7 +14,6 @@ final class ClipboardViewModel: ObservableObject {
     @Published var selectedBoardID: Int64 = 0
     @Published var query: String = "" {
         didSet {
-
             if query != oldValue {
                 isNavigating = false
                 scheduleNavigationMode()
@@ -177,6 +176,7 @@ final class ClipboardViewModel: ObservableObject {
     }
 
     func beginSearch() {
+        guard !searchActive else { return }
         searchActive = true
     }
 

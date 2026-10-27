@@ -96,13 +96,45 @@ struct SearchField: NSViewRepresentable {
     var onAnyCommand: ((Selector) -> Void)?
 
     var onTextAppear: (() -> Void)?
-    var focusOnAppear: Bool = true
+    var focusOnAppear: Bool = false
+    var debounce: TimeInterval = 0.12
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator {
+        var parent: SearchField
+        var lastModelText: String
+        var lastCommitted: String?
+        var work: DispatchWorkItem?
+
+        init(_ parent: SearchField) {
+            self.parent = parent
+            self.lastModelText = parent.text
+        }
+
+        func schedule(_ value: String) {
+            work?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                self.lastCommitted = value
+                self.parent.text = value
+            }
+            work = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + parent.debounce, execute: item)
+        }
+
+        func cancel() {
+            work?.cancel()
+            work = nil
+        }
+    }
 
     func makeNSView(context: Context) -> KeyCommandTextField {
         let field = KeyCommandTextField()
+        field.setText(text)
         field.onTextChange = { newValue in
             if !newValue.isEmpty { onTextAppear?() }
-            if text != newValue { text = newValue }
+            context.coordinator.schedule(newValue)
         }
         field.onMove = onMove
         field.onCommit = onCommit
@@ -119,11 +151,23 @@ struct SearchField: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: KeyCommandTextField, context: Context) {
-        nsView.setText(text)
+        let coordinator = context.coordinator
+        coordinator.parent = self
         nsView.onMove = onMove
         nsView.onCommit = onCommit
         nsView.onCancel = onCancel
         nsView.onSelectAllCards = onSelectAllCards
         nsView.onSelectAllText = onSelectAllText
+
+        // Only push the model's text into the field when the model changed on
+        // its own (Esc/clear/demo). The debounced commit echoing the user's
+        // own typing must not overwrite newer characters.
+        if text != coordinator.lastModelText {
+            coordinator.lastModelText = text
+            if text != coordinator.lastCommitted {
+                coordinator.cancel()
+                nsView.setText(text)
+            }
+        }
     }
 }
