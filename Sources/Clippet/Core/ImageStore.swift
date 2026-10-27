@@ -26,6 +26,31 @@ enum ImageStore {
         return c
     }()
 
+    /// Decodes run one at a time at utility QoS: a screen full of screenshots
+    /// is still seven or eight full PNG decodes, and doing them together at
+    /// user-initiated priority competes with the panel's slide-in animation.
+    private static let decodeQueue = DispatchQueue(label: "clippet.image-decode",
+                                                   qos: .utility)
+
+    static func thumbnailAndSizeAsync(forID id: Int64,
+                                      maxDimension: CGFloat = 520) async -> (image: NSImage?, pixelSize: CGSize?) {
+        await withCheckedContinuation { continuation in
+            decodeQueue.async {
+                let result = thumbnailAndSize(forID: id, maxDimension: maxDimension)
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
+    static func previewImageAsync(forID id: Int64,
+                                  maxDimension: CGFloat = 1600) async -> NSImage? {
+        await withCheckedContinuation { continuation in
+            decodeQueue.async {
+                continuation.resume(returning: previewImage(forID: id, maxDimension: maxDimension))
+            }
+        }
+    }
+
     private static let fileIconCache: NSCache<NSString, NSImage> = {
         let c = NSCache<NSString, NSImage>()
         c.countLimit = 80

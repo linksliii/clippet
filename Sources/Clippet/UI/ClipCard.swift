@@ -35,16 +35,12 @@ private struct CardImage: View {
             image = nil
             sizeLabel = nil
             let id = item.id
-            let loaded = await Task.detached(priority: .userInitiated) { () -> (NSImage?, String?) in
-                let result = ImageStore.thumbnailAndSize(forID: id)
-                var label: String?
-                if let size = result.pixelSize {
-                    label = "\(Int(size.width)) × \(Int(size.height))"
-                }
-                return (result.image, label)
-            }.value
-            image = loaded.0
-            sizeLabel = loaded.1
+            let result = await ImageStore.thumbnailAndSizeAsync(forID: id)
+            guard !Task.isCancelled else { return }
+            image = result.image
+            if let size = result.pixelSize {
+                sizeLabel = "\(Int(size.width)) × \(Int(size.height))"
+            }
         }
     }
 }
