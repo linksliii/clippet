@@ -20,8 +20,11 @@ final class AppController: NSObject, NSWindowDelegate {
 
     private var syncGeneration = 0
 
+    private var isAnimatingIn = false
     private var isAnimatingOut = false
-    private var idleTeardown: DispatchWorkItem?
+    private var isFittingPanel = false
+    private var showGeneration = 0
+    private var idleCleanup: DispatchWorkItem?
 
     private var visibleSince: Date?
 
@@ -78,7 +81,7 @@ final class AppController: NSObject, NSWindowDelegate {
         viewModel.reloadBoards()
         viewModel.reload(resetSelection: true)
 
-        _ = ensurePanel()
+        _ = ensurePanel(width: panelPlacement().screen.frame.width)
 
         // Prewarm: the panel's real cost is ~1 MB of physical footprint, so
         // building it up front is worth the instant first show.
@@ -97,6 +100,11 @@ final class AppController: NSObject, NSWindowDelegate {
             self,
             selector: #selector(ensureMainMenu),
             name: NSApplication.didBecomeActiveNotification,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenParametersDidChange),
+            name: NSApplication.didChangeScreenParametersNotification,
             object: nil)
         monitor.start()
 
@@ -248,13 +256,13 @@ final class AppController: NSObject, NSWindowDelegate {
         panel?.isVisible ?? false
     }
 
-    private func ensurePanel() -> ClipboardPanel {
+    private func ensurePanel(width: CGFloat = 0) -> ClipboardPanel {
         if let existing = panel { return existing }
 
         let screen = NSScreen.main ?? NSScreen.screens[0]
-        let width = screen.frame.width
+        let panelWidth = width > 1 ? width : screen.frame.width
         let rect = NSRect(x: screen.frame.minX, y: 0,
-                          width: width, height: Design.panelHeight)
+                          width: panelWidth, height: Design.panelHeight)
 
         let p = ClipboardPanel.transparent(size: rect.size)
         p.setFrame(rect, display: false)
@@ -301,21 +309,53 @@ final class AppController: NSObject, NSWindowDelegate {
             ?? NSScreen.screens[0]
     }
 
-    private func screenFrame() -> NSRect {
-        screenForMouse().visibleFrame
+    /// The panel opens on the display under the pointer, at the vertical spot
+    /// the user last dragged it to. The bottom offset is shared by all displays,
+    /// so switching screens keeps the same place.
+    private func panelPlacement() -> (screen: NSScreen, y: CGFloat) {
+        let screen = screenForMouse()
+        let visible = screen.visibleFrame
+        let height = Design.panelHeight
+
+        var y = visible.midY - height / 2
+        if let bottom = PanelFrameStore.savedBottomOffset() {
+            y = min(max(visible.minY + bottom, visible.minY), visible.maxY - height)
+        }
+        return (screen, y)
     }
 
-    private func targetFrame(for size: NSSize, on screen: NSScreen) -> NSRect {
-        let visible = screen.visibleFrame
-        var y = visible.midY - size.height / 2
+    private func panelFrame(on screen: NSScreen, y: CGFloat) -> NSRect {
+        NSRect(x: screen.frame.minX, y: y,
+               width: screen.frame.width, height: Design.panelHeight)
+    }
 
-        if let saved = PanelFrameStore.savedFrame(), PanelFrameStore.isUsable(saved, on: screen) {
-
-            let clamped = min(max(saved.origin.y, visible.minY),
-                              visible.maxY - size.height)
-            y = clamped
+    /// `NSWindow.screen` can still report the previous display right after a
+    /// move, so work out the display from the frame itself.
+    private func screen(containing frame: NSRect) -> NSScreen? {
+        var best: (screen: NSScreen, area: CGFloat)?
+        for screen in NSScreen.screens {
+            let overlap = screen.frame.intersection(frame)
+            guard !overlap.isNull else { continue }
+            let area = overlap.width * overlap.height
+            if area > (best?.area ?? 0) { best = (screen, area) }
         }
-        return NSRect(x: screen.frame.minX, y: y, width: size.width, height: size.height)
+        return best?.screen ?? NSScreen.main ?? NSScreen.screens.first
+    }
+
+    /// The panel is a full-width bar. When it is dragged onto another display
+    /// (or that display changes size), stretch it to the new width instead of
+    /// carrying the old display's width across.
+    private func fitPanelToScreen(_ p: ClipboardPanel, screen: NSScreen) {
+        let x = screen.frame.minX
+        let width = screen.frame.width
+        guard abs(p.frame.minX - x) > 0.5 || abs(p.frame.width - width) > 0.5 else { return }
+
+        var frame = p.frame
+        frame.origin.x = x
+        frame.size.width = width
+        isFittingPanel = true
+        p.setFrame(frame, display: true)
+        isFittingPanel = false
     }
 
     private func offscreenFrame(for target: NSRect, in visible: NSRect) -> NSRect {
@@ -327,6 +367,7 @@ final class AppController: NSObject, NSWindowDelegate {
     func showFromUser() { showPanel() }
 
     private func showPanel() {
+        guard !isPanelVisible else { return }
 
         let frontmost = NSWorkspace.shared.frontmostApplication
         if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
@@ -335,11 +376,11 @@ final class AppController: NSObject, NSWindowDelegate {
 
         ensureMainMenu()
         NSApp.activate(ignoringOtherApps: true)
-        let p = ensurePanel()
-        let screen = screenForMouse()
-        let visible = screen.visibleFrame
-        let target = targetFrame(for: p.frame.size, on: screen)
-        let start = offscreenFrame(for: target, in: visible)
+
+        let placement = panelPlacement()
+        let target = panelFrame(on: placement.screen, y: placement.y)
+        let start = offscreenFrame(for: target, in: placement.screen.visibleFrame)
+        let p = ensurePanel(width: target.width)
 
         lastSyncedSelectionID = nil
 
@@ -347,31 +388,44 @@ final class AppController: NSObject, NSWindowDelegate {
         viewModel.reload(resetSelection: true)
         viewModel.clearMultiSelection()
 
-        idleTeardown?.cancel()
-        idleTeardown = nil
+        idleCleanup?.cancel()
+        idleCleanup = nil
         visibleSince = Date()
-        p.setFrame(start, display: false)
+        showGeneration += 1
+        let generation = showGeneration
+
         p.alphaValue = 0
+        p.setFrame(start, display: false)
+        // Lay the SwiftUI tree out while the window is invisible, so the first
+        // animation frames are not spent sizing cards and the glass.
+        p.contentView?.layoutSubtreeIfNeeded()
         p.makeKeyAndOrderFront(nil)
         p.orderFrontRegardless()
-        NSApp.activate(ignoringOtherApps: true)
         p.makeKey()
+        p.displayIfNeeded()
 
-        DispatchQueue.main.async { [weak p] in
-            NSApp.activate(ignoringOtherApps: true)
-            p?.makeKey()
+        // Activating the app makes the window server hold frame animations for
+        // a beat; a slide started in the same turn skips its first frames and
+        // lands as a jump. Start the slide once activation has settled.
+        DispatchQueue.main.async { [weak self, weak p] in
+            guard let self = self, let p = p, p.isVisible,
+                  !self.isAnimatingOut,
+                  generation == self.showGeneration else { return }
+            p.makeKey()
+            self.focusSearchField()
+            self.isAnimatingIn = true
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.30
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.08, 0.30, 1.0)
+                ctx.allowsImplicitAnimation = true
+                p.animator().setFrame(target, display: true)
+                p.animator().alphaValue = 1.0
+            }, completionHandler: { [weak self] in
+                guard let self = self, generation == self.showGeneration else { return }
+                self.isAnimatingIn = false
+            })
         }
-
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.38
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.08, 0.30, 1.0)
-            ctx.allowsImplicitAnimation = true
-            p.animator().setFrame(target, display: true)
-            p.animator().alphaValue = 1.0
-        }
-        NSLog("Clippet: panel visible=\(p.isVisible) key=\(p.isKeyWindow) appActive=\(NSApp.isActive) frame=\(p.frame)")
-
-        DispatchQueue.main.async { [weak self] in self?.focusSearchField() }
+        NSLog("Clippet: panel visible=\(p.isVisible) key=\(p.isKeyWindow) appActive=\(NSApp.isActive) target=\(target)")
 #if DEBUG
         if CommandLine.arguments.contains("--probe-key") {
             for delay in [0.05, 0.15, 0.35, 0.6] {
@@ -387,10 +441,11 @@ final class AppController: NSObject, NSWindowDelegate {
         if viewModel.previewItem != nil { viewModel.previewItem = nil }
         guard let p = panel, p.isVisible else { return }
 
-        PanelFrameStore.save(p.frame)
+        showGeneration += 1
+        isAnimatingIn = false
         isAnimatingOut = true
 
-        let visible = screenFrame()
+        let visible = (screen(containing: p.frame) ?? screenForMouse()).visibleFrame
         let off = offscreenFrame(for: p.frame, in: visible)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.20
@@ -401,37 +456,41 @@ final class AppController: NSObject, NSWindowDelegate {
             p.orderOut(nil)
             p.alphaValue = 1.0
             self?.isAnimatingOut = false
-            self?.scheduleIdleTeardown()
+            self?.scheduleIdleCleanup()
         })
     }
 
-    /// The SwiftUI tree behind the panel costs ~60 MB. Holding it while the
-    /// panel is closed keeps idle memory near 110 MB, so it is released after a
-    /// grace period and rebuilt on next use (which costs ~100 ms).
-    private func scheduleIdleTeardown() {
-        idleTeardown?.cancel()
+    /// Keep the panel and its SwiftUI tree warm between uses: rebuilding them
+    /// after an idle pause costs ~50 ms on the next show, while holding them
+    /// costs a few MB of physical footprint. Only the transient preview and the
+    /// raw image bytes are released after a grace period.
+    private func scheduleIdleCleanup() {
+        idleCleanup?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, let p = self.panel, !p.isVisible else { return }
-            p.contentView = nil
-            p.orderOut(nil)
-            self.panel = nil
             self.previewPanel?.contentView = nil
             self.previewPanel?.orderOut(nil)
             self.previewPanel = nil
-            ImageStore.purge()
+            ImageStore.purgeFullSize()
         }
-        idleTeardown = work
+        idleCleanup = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
     }
 
     func windowDidMove(_ notification: Notification) {
+        // Programmatic moves (the slide-in and slide-out animations) pass
+        // through here too; only a move the user made while the panel is at
+        // rest is a position worth remembering.
+        guard !isAnimatingIn, !isAnimatingOut, !isFittingPanel else { return }
+        guard let p = panel, p.isVisible, let screen = screen(containing: p.frame) else { return }
+        fitPanelToScreen(p, screen: screen)
+        PanelFrameStore.save(p.frame, on: screen)
+    }
 
-        guard !isAnimatingOut else { return }
-        guard let p = panel, p.isVisible else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-            guard let self = self, let p = self.panel, p.isVisible else { return }
-            PanelFrameStore.save(p.frame)
-        }
+    @objc private func screenParametersDidChange() {
+        guard !isAnimatingIn, !isAnimatingOut, !isFittingPanel else { return }
+        guard let p = panel, p.isVisible, let screen = screen(containing: p.frame) else { return }
+        fitPanelToScreen(p, screen: screen)
     }
 
     @objc private func appDidResignActive() {

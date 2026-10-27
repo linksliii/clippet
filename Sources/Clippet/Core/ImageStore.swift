@@ -80,6 +80,12 @@ enum ImageStore {
         return data
     }
 
+    /// Drops raw image bytes but keeps decoded thumbnails, so the next panel
+    /// show does not have to decode the cards it is about to display again.
+    static func purgeFullSize() {
+        dataCache.removeAllObjects()
+    }
+
     static func purge() {
         thumbCache.removeAllObjects()
         sizeCache.removeAllObjects()
