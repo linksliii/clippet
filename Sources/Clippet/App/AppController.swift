@@ -48,30 +48,7 @@ final class AppController: NSObject, NSWindowDelegate {
         super.init()
     }
 
-#if DEBUG
-    private func rssMB() -> Double {
-        var i = mach_task_basic_info()
-        var c = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
-        let k = withUnsafeMutablePointer(to: &i) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(c)) {
-            task_info(mach_self, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &c) } }
-        return k == KERN_SUCCESS ? Double(i.resident_size) / 1048576 : 0
-    }
-    private var mach_self: mach_port_t { mach_task_self_ }
-#endif
-
     func start() {
-#if DEBUG
-        NSLog("RSS start=%.0f", rssMB())
-        defer { NSLog("RSS end=%.0f", rssMB()) }
-        for d in [0.05, 0.15, 0.3, 0.5, 1.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
-                guard let self = self else { return }
-                NSLog("RSS +%.0fs=%.0f active=%d menu=%d", d, self.rssMB(),
-                      NSApp.isActive ? 1 : 0, NSApp.mainMenu == nil ? 0 : 1)
-            }
-        }
-#endif
-
         ImageStore.dataProvider = { [weak self] id in
             self?.repository.imageData(id: id)
         }
@@ -138,82 +115,6 @@ final class AppController: NSObject, NSWindowDelegate {
         if !PasteboardWriter.canSendKeystrokes {
             NSLog("Clippet: accessibility permission not granted; pasting will not work until enabled")
         }
-
-#if DEBUG
-        if let i = CommandLine.arguments.firstIndex(of: "--show-after"),
-           i + 1 < CommandLine.arguments.count,
-           let seconds = Double(CommandLine.arguments[i + 1]) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-                self?.showPanel()
-            }
-        }
-
-        if CommandLine.arguments.contains("--show-settings") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.showSettingsWindow()
-            }
-        }
-
-        if let i = CommandLine.arguments.firstIndex(of: "--cycle"),
-           i + 1 < CommandLine.arguments.count,
-           let cycles = Int(CommandLine.arguments[i + 1]) {
-            runCycleProbe(cycles: cycles)
-        }
-
-        if let i = CommandLine.arguments.firstIndex(of: "--hide-after"),
-           i + 1 < CommandLine.arguments.count,
-           let seconds = Double(CommandLine.arguments[i + 1]) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-                self?.hidePanel()
-            }
-        }
-
-        if CommandLine.arguments.contains("--show-panel") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.showPanel()
-                if CommandLine.arguments.contains("--show-filters") {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.viewModel.filtersOpen = true
-                    }
-                }
-                if let i = CommandLine.arguments.firstIndex(of: "--search-demo"),
-                   i + 1 < CommandLine.arguments.count {
-                    let q = CommandLine.arguments[i + 1]
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                        self?.viewModel.beginSearch()
-                        self?.viewModel.query = q
-                    }
-                }
-                if CommandLine.arguments.contains("--preview-demo") {
-                    let index: Int
-                    if let i = CommandLine.arguments.firstIndex(of: "--preview-index"),
-                       i + 1 < CommandLine.arguments.count,
-                       let n = Int(CommandLine.arguments[i + 1]) {
-                        index = n
-                    } else {
-                        index = 0
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-                        guard let self = self, index < self.viewModel.items.count else { return }
-                        self.viewModel.selection = index
-                        self.viewModel.previewItem = self.viewModel.items[index]
-                    }
-                }
-                if CommandLine.arguments.contains("--multi-demo") {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                        guard let self = self else { return }
-                        for item in self.viewModel.items.prefix(3) {
-                            self.viewModel.selectedIDs.insert(item.id)
-                        }
-                    }
-                }
-                if CommandLine.arguments.contains("--filter-demo") {
-                    self?.viewModel.kindFilter = .text
-                    self?.viewModel.dateFilter = .today
-                }
-            }
-        }
-#endif
 
     }
 
@@ -343,7 +244,6 @@ final class AppController: NSObject, NSWindowDelegate {
         container.addSubview(hosting)
 
         p.contentView = container
-        NSLog("Clippet: panel backing = \(usesGlass ? "Liquid Glass" : "vibrancy fallback")")
         panel = p
         return p
     }
@@ -481,16 +381,6 @@ final class AppController: NSObject, NSWindowDelegate {
                 self.isAnimatingIn = false
             })
         }
-        NSLog("Clippet: panel visible=\(p.isVisible) key=\(p.isKeyWindow) appActive=\(NSApp.isActive) target=\(target)")
-#if DEBUG
-        if CommandLine.arguments.contains("--probe-key") {
-            for delay in [0.05, 0.15, 0.35, 0.6] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak p] in
-                    NSLog("Clippet: probe +\(delay)s key=\(p?.isKeyWindow ?? false) active=\(NSApp.isActive) frameY=\(p?.frame.origin.y ?? 0)")
-                }
-            }
-        }
-#endif
     }
 
     private func hidePanel(animated: Bool = true, completion: (() -> Void)? = nil) {
@@ -576,52 +466,6 @@ final class AppController: NSObject, NSWindowDelegate {
         hidePanel()
     }
 
-#if DEBUG
-
-    private func runCycleProbe(cycles: Int) {
-        let start = Date()
-        func resident() -> Double {
-            var info = mach_task_basic_info()
-            var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
-            let kr = withUnsafeMutablePointer(to: &info) {
-                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                    task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
-                }
-            }
-            guard kr == KERN_SUCCESS else { return 0 }
-            return Double(info.resident_size) / 1024 / 1024
-        }
-
-        NSLog("Clippet: cycle probe start rss=%.1f MB", resident())
-        for cycle in 1...cycles {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(cycle) * 0.35) { [weak self] in
-                guard let self = self else { return }
-                self.showPanel()
-                self.viewModel.query = "lorem \(cycle)"
-                self.viewModel.reload()
-                if let item = self.viewModel.selectedItem {
-                    self.viewModel.previewItem = item
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                    self.viewModel.previewItem = nil
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    self.hidePanel()
-                    if cycle % 10 == 1 || cycle == cycles {
-                        NSLog("Clippet: cycle %d/%d rss=%.1f MB (%.1fs)",
-                              cycle, cycles, resident(),
-                              Date().timeIntervalSince(start))
-                    }
-                }
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Double(cycles) * 0.35 + 0.5) {
-            NSLog("Clippet: cycle probe done rss=%.1f MB", resident())
-        }
-    }
-
-#endif
-
     private func installClickMonitor() {
         guard mouseMonitor == nil else { return }
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
@@ -636,8 +480,6 @@ final class AppController: NSObject, NSWindowDelegate {
                self.isSearchFieldFocused {
                 panel.makeFirstResponder(nil)
             }
-
-            guard self.viewModel.previewItem == nil else { return event }
 
             let height = panel.contentView?.bounds.height ?? panel.frame.height
 
@@ -988,8 +830,7 @@ final class AppController: NSObject, NSWindowDelegate {
             NSLog("Clippet: search field not found in hierarchy")
             return
         }
-        let ok = panel?.makeFirstResponder(field) ?? false
-        NSLog("Clippet: focus search field ok=\(ok) responder=\(String(describing: panel?.firstResponder.map { type(of: $0) }))")
+        panel?.makeFirstResponder(field)
     }
 
     private func withSearchField(_ body: @escaping (KeyCommandTextField, NSTextView?) -> Void) {
@@ -1029,12 +870,6 @@ final class AppController: NSObject, NSWindowDelegate {
         item.menu = menu
         statusItem = item
         statusItem?.isVisible = settings.showMenuBarIcon
-        NSLog("Clippet: status item created image=%@ visible=%d", String(describing: buttonImageDescription(item)), item.isVisible ? 1 : 0)
-    }
-
-    private func buttonImageDescription(_ item: NSStatusItem) -> String {
-        guard let img = item.button?.image else { return "nil" }
-        return "\(img.size.width)x\(img.size.height) template=\(img.isTemplate)"
     }
 
     /// Called once when the app first becomes active: constructing the menu
@@ -1116,9 +951,6 @@ final class AppController: NSObject, NSWindowDelegate {
         NSApp.windowsMenu = windowMenu
 
         NSApp.mainMenu = mainMenu
-        NSLog("Clippet: main menu installed items=%@ active=%d policy=%d",
-              mainMenu.items.map(\.title).description, NSApp.isActive ? 1 : 0,
-              NSApp.activationPolicy().rawValue)
     }
 
     @objc private func menuAbout() {
@@ -1185,14 +1017,7 @@ final class AppController: NSObject, NSWindowDelegate {
             window.center()
             settingsWindow = window
         }
-        var initial: SettingsPane = .general
-#if DEBUG
-        if let i = CommandLine.arguments.firstIndex(of: "--settings-pane"),
-           i + 1 < CommandLine.arguments.count,
-           let pane = SettingsPane(rawValue: CommandLine.arguments[i + 1]) {
-            initial = pane
-        }
-#endif
+        let initial: SettingsPane = .general
         settingsWindow?.contentView = NSHostingView(
             rootView: SettingsView(settings: settings, knownApps: apps, initialPane: initial))
         NSApp.activate(ignoringOtherApps: true)

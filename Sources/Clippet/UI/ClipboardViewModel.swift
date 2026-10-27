@@ -65,6 +65,8 @@ final class ClipboardViewModel: ObservableObject {
 
     private let repo: Repository
     private var suppressReload = false
+    private let reloadQueue = DispatchQueue(label: "clippet.reload", qos: .userInitiated)
+    private var reloadGeneration = 0
 
     init(repo: Repository) {
         self.repo = repo
@@ -154,6 +156,9 @@ final class ClipboardViewModel: ObservableObject {
     }
 
     func reload(resetSelection: Bool = false) {
+        reloadGeneration += 1
+        let generation = reloadGeneration
+
         var filter = HistoryFilter(query: query)
         filter.kind = kindFilter
 
@@ -163,16 +168,28 @@ final class ClipboardViewModel: ObservableObject {
         filter.since = dateFilter?.since
         filter.limit = 300
 
-        items = repo.fetch(filter)
-
-        if filtersOpen {
-            refreshApps()
-            totalCount = repo.count()
+        let wantsFilterMeta = filtersOpen
+        let repo = self.repo
+        reloadQueue.async { [weak self] in
+            let items = repo.fetch(filter)
+            let count = wantsFilterMeta ? repo.count() : 0
+            let apps = wantsFilterMeta ? repo.apps() : []
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.reloadGeneration else { return }
+                self.items = items
+                if wantsFilterMeta {
+                    self.apps = apps.map {
+                        AppUsage(bundleID: $0.bundleID, name: $0.name, count: $0.count)
+                    }
+                    self.totalCount = count
+                }
+                if resetSelection { self.selection = 0 }
+                if self.items.isEmpty { self.selection = 0 }
+                if self.selection >= self.items.count {
+                    self.selection = max(0, self.items.count - 1)
+                }
+            }
         }
-
-        if resetSelection { selection = 0 }
-        if items.isEmpty { selection = 0 }
-        if selection >= items.count { selection = max(0, items.count - 1) }
     }
 
     func beginSearch() {

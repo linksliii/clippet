@@ -84,8 +84,12 @@ struct PreviewOverlay: View {
     }
 
     private var textPreview: some View {
-        ScrollView {
-            Text(item.text ?? "")
+        let raw = item.text ?? ""
+        let text = raw.count > 20_000
+            ? String(raw.prefix(20_000)) + "\n\n…（已截断，共 \(raw.count) 字符）"
+            : raw
+        return ScrollView {
+            Text(text)
                 .font(item.kind == .code
                       ? .system(size: 12.5, design: .monospaced)
                       : .system(size: 13.5))

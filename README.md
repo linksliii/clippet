@@ -20,7 +20,6 @@
   <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white" />
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-0-2ea44f" />
   <img alt="Binary" src="https://img.shields.io/badge/binary-767%20KB-blue" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-73%20passing-brightgreen" />
   <img alt="Downloads" src="https://img.shields.io/github/downloads/linksliii/clippet/total?color=2ea44f" />
 </p>
 
@@ -113,7 +112,7 @@ Sources/Clippet/
 ├── App/        应用装配、面板窗口、主菜单、状态栏
 ├── Core/       SQLite 存储、内容分类、图像归一化、剪贴板监听
 ├── UI/         卡片轮播、设置页、筛选器、预览窗、搜索框桥接
-└── Support/    全局热键、按键路由、设置模型、图标、开发工具
+└── Support/    全局热键、按键路由、设置模型、图标
 ```
 
 - **存储** — SQLite（手写薄封装）。列表查询只读 400 字符的 preview 列，正文和图片按需懒加载，因此历史里堆着大文件也不会拖慢滚动。
@@ -123,16 +122,9 @@ Sources/Clippet/
 
 ## 开发
 
-诊断工具只在 debug 构建中编译：
-
 ```bash
 swift build
-.build/debug/Clippet --selftest      # 73 项行为测试
-.build/debug/Clippet --bench         # 数据层基准
-.build/debug/Clippet --bench-large   # 大文件路径（20 MB 文本 / 12000 px 图 / 200 文件）
-.build/debug/Clippet --bench-json    # 批量 JSON 搜索
-.build/debug/Clippet --memprobe      # 内存与压力测试
-.build/debug/Clippet --cycle 180     # 面板反复开合的泄漏检查
+./build.sh      # 签名并安装 build/Clippet.app
 ```
 
 ## 隐私

@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-private struct CardFramesKey: PreferenceKey {
-    static var defaultValue: [Int: CGRect] = [:]
-    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
+private struct CardScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -14,8 +14,7 @@ struct HistoryView: View {
     var usesSystemGlass: Bool = false
     @State private var hoverFooter = false
 
-    @State private var lastTapIndex: Int = -1
-    @State private var lastTapTime: CFAbsoluteTime = 0
+    @State private var scrollOffset: CGFloat = 0
 
     @State private var hoverTab: Int64?
 
@@ -294,63 +293,79 @@ struct HistoryView: View {
         Repository.searchTerms(model.query)
     }
 
-    private var cardRow: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                if model.items.isEmpty {
-                    emptyState
-                        .frame(width: 520, height: Design.cardHeight)
-                } else {
-                    LazyHStack(spacing: Design.cardGap) {
-                        ForEach(Array(model.items.enumerated()), id: \.element.id) { offset, item in
-                            ClipCard(item: item,
-                                     index: offset + 1,
-                                     isSelected: offset == model.selection
-                                                 || model.selectedIDs.contains(item.id),
-                                     board: model.board(for: item),
-                                     highlightTerms: queryTerms,
-                                     isMultiSelecting: model.hasMultiSelection,
-                                     isMultiSelected: model.selectedIDs.contains(item.id))
-                                .id(item.id)
-                                .background(
-                                    GeometryReader { geo in
-                                        Color.clear.preference(
-                                            key: CardFramesKey.self,
-                                            value: [offset: geo.frame(in: .global)])
-                                    }
-                                )
-
-                                .onTapGesture {
-                                    handleTap(item: item, index: offset)
-                                }
-                                .contextMenu { contextMenu(for: item) }
-                        }
-                    }
-                    .padding(.horizontal, Design.sidePadding)
-                }
-            }
-            .onPreferenceChange(CardFramesKey.self) { frames in
-                model.cardFrames = frames
+    private func updateCardFrames(rowFrame: CGRect, offset: CGFloat) {
+        guard !model.items.isEmpty else {
+            if !model.cardFrames.isEmpty {
+                model.cardFrames = [:]
                 model.onCardFramesChange?()
-                if CommandLine.arguments.contains("--log-frames") {
-                    let ordered = frames.sorted { $0.key < $1.key }.map {
-                        "[\($0.key)] x=\(Int($0.value.minX)) y=\(Int($0.value.minY)) w=\(Int($0.value.width)) h=\(Int($0.value.height))"
-                    }
-                    NSLog("Clippet: card frames %@", ordered.joined(separator: " | "))
-                }
             }
-            .onChange(of: model.selection) { _, newValue in
-                guard newValue >= 0, newValue < model.items.count else { return }
+            return
+        }
+        var frames: [Int: CGRect] = [:]
+        let y = rowFrame.minY
+        for index in model.items.indices {
+            let x = rowFrame.minX + Design.sidePadding
+                + CGFloat(index) * (Design.cardWidth + Design.cardGap) + offset
+            frames[index] = CGRect(x: x, y: y,
+                                   width: Design.cardWidth, height: Design.cardHeight)
+        }
+        model.cardFrames = frames
+        model.onCardFramesChange?()
+    }
 
-                if model.isWheelScrolling {
-                    // Match the damping of the native horizontal scroll
-                    // instead of jumping to the card.
-                    withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.86)) {
-                        proxy.scrollTo(model.items[newValue].id)
+    private var cardRow: some View {
+        GeometryReader { rowGeo in
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    if model.items.isEmpty {
+                        emptyState
+                            .frame(width: 520, height: Design.cardHeight)
+                    } else {
+                        LazyHStack(spacing: Design.cardGap) {
+                            ForEach(Array(model.items.enumerated()), id: \.element.id) { offset, item in
+                                ClipCard(item: item,
+                                         index: offset + 1,
+                                         isSelected: offset == model.selection
+                                                     || model.selectedIDs.contains(item.id),
+                                         board: model.board(for: item),
+                                         highlightTerms: queryTerms,
+                                         isMultiSelecting: model.hasMultiSelection,
+                                         isMultiSelected: model.selectedIDs.contains(item.id))
+                                    .id(item.id)
+                                    .contextMenu { contextMenu(for: item) }
+                            }
+                        }
+                        .padding(.horizontal, Design.sidePadding)
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: CardScrollOffsetKey.self,
+                                    value: geo.frame(in: .named("cardScroll")).minX)
+                            }
+                        )
                     }
-                } else {
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        proxy.scrollTo(model.items[newValue].id)
+                }
+                .coordinateSpace(name: "cardScroll")
+                .onPreferenceChange(CardScrollOffsetKey.self) { offset in
+                    scrollOffset = offset
+                    updateCardFrames(rowFrame: rowGeo.frame(in: .global), offset: offset)
+                }
+                .onChange(of: rowGeo.frame(in: .global)) { _, frame in
+                    updateCardFrames(rowFrame: frame, offset: scrollOffset)
+                }
+                .onChange(of: model.items) { _, _ in
+                    updateCardFrames(rowFrame: rowGeo.frame(in: .global), offset: scrollOffset)
+                }
+                .onChange(of: model.selection) { _, newValue in
+                    guard newValue >= 0, newValue < model.items.count else { return }
+                    if model.isWheelScrolling {
+                        withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.86)) {
+                            proxy.scrollTo(model.items[newValue].id)
+                        }
+                    } else {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(model.items[newValue].id)
+                        }
                     }
                 }
             }
@@ -391,31 +406,6 @@ struct HistoryView: View {
                 .foregroundStyle(.white.opacity(0.4))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func handleTap(item: ClipItem, index: Int) {
-        let now = CFAbsoluteTimeGetCurrent()
-        let isDoubleClick = lastTapIndex == index
-            && (now - lastTapTime) < NSEvent.doubleClickInterval
-        lastTapIndex = index
-        lastTapTime = now
-
-        if isDoubleClick {
-            model.selection = index
-            model.commitSelection()
-            return
-        }
-
-        let flags = NSEvent.modifierFlags
-        if flags.contains(.command) {
-            model.selection = index
-            model.toggleSelection(item)
-        } else if flags.contains(.shift) {
-            model.selectRange(to: index)
-        } else {
-            if model.hasMultiSelection { model.clearMultiSelection() }
-            model.selection = index
-        }
     }
 
     @ViewBuilder
