@@ -59,6 +59,7 @@ final class ClipboardViewModel: ObservableObject {
 
     var onPaste: ((ClipItem) -> Void)?
     var onClose: (() -> Void)?
+    var onFocusSearch: (() -> Void)?
 
     var cardFrames: [Int: CGRect] = [:]
     var onCardFramesChange: (() -> Void)?

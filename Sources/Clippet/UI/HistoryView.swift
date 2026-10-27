@@ -89,6 +89,7 @@ struct HistoryView: View {
     private var searchButton: some View {
         Button {
             model.beginSearch()
+            model.onFocusSearch?()
         } label: {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 15, weight: .medium))

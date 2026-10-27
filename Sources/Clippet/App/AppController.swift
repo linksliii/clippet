@@ -252,6 +252,9 @@ final class AppController: NSObject, NSWindowDelegate {
         viewModel.onClose = { [weak self] in
             self?.hidePanel()
         }
+        viewModel.onFocusSearch = { [weak self] in
+            self?.focusSearchField()
+        }
         viewModel.onCardFramesChange = { [weak self] in
             self?.repositionPreview()
         }
@@ -453,6 +456,10 @@ final class AppController: NSObject, NSWindowDelegate {
         p.orderFrontRegardless()
         p.makeKey()
         p.displayIfNeeded()
+        // The window's key-view loop otherwise focuses the search field on
+        // every open; leave it unfocused so ←/→ navigate until the user
+        // clicks the field (or opens search with ⌘F / the icon).
+        p.makeFirstResponder(nil)
 
         // Activating the app makes the window server hold frame animations for
         // a beat; a slide started in the same turn skips its first frames and
@@ -462,7 +469,6 @@ final class AppController: NSObject, NSWindowDelegate {
                   !self.isAnimatingOut,
                   generation == self.showGeneration else { return }
             p.makeKey()
-            self.focusSearchField()
             self.isAnimatingIn = true
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.30
@@ -493,6 +499,9 @@ final class AppController: NSObject, NSWindowDelegate {
             completion?()
             return
         }
+        // Leaving the field editor first responder across hides makes the
+        // next open swallow arrow keys as caret movement.
+        p.makeFirstResponder(nil)
 
         showGeneration += 1
         isAnimatingIn = false
@@ -618,9 +627,17 @@ final class AppController: NSObject, NSWindowDelegate {
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
             guard let self = self,
                   self.isPanelVisible,
-                  self.viewModel.previewItem == nil,
                   let panel = self.panel,
                   event.window === panel else { return event }
+
+            // Clicking the search field focuses it; clicking anywhere else
+            // ends editing so ←/→ navigate the cards again.
+            if !self.isPointInSearchField(event.locationInWindow),
+               self.isSearchFieldFocused {
+                panel.makeFirstResponder(nil)
+            }
+
+            guard self.viewModel.previewItem == nil else { return event }
 
             let height = panel.contentView?.bounds.height ?? panel.frame.height
 
@@ -834,6 +851,18 @@ final class AppController: NSObject, NSWindowDelegate {
         searchFieldEditor?.hasMarkedText() ?? false
     }
 
+    private var isSearchFieldFocused: Bool {
+        guard let editor = searchFieldEditor else { return false }
+        return panel?.firstResponder === editor
+    }
+
+    private func isPointInSearchField(_ point: NSPoint) -> Bool {
+        guard let panel = panel,
+              let field = searchTextField(),
+              field.window === panel else { return false }
+        return field.convert(field.bounds, to: nil).contains(point)
+    }
+
     private func handleKey(_ event: NSEvent) -> Bool {
         // While previewing, up/down move the selection and the popover follows.
         if viewModel.previewItem != nil, event.keyCode == 125 || event.keyCode == 126 {
@@ -841,14 +870,22 @@ final class AppController: NSObject, NSWindowDelegate {
             return true
         }
 
-        // Plain left/right move the card selection even while the search field
-        // has focus; otherwise the field editor eats them for caret movement
-        // and ←/→ never reach the panel. Modified arrows stay with the field.
+        // Plain left/right move the card selection when the search field is
+        // not being edited; while it is focused they must stay with the field
+        // editor so the caret can be moved inside the query.
         let navModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
-        if !isComposingText,
+        if !isComposingText, !isSearchFieldFocused,
            event.modifierFlags.intersection(navModifiers).isEmpty,
            event.keyCode == 123 || event.keyCode == 124 {
             viewModel.moveSelection(event.keyCode == 123 ? -1 : 1)
+            return true
+        }
+
+        if !isComposingText, event.keyCode == 53 {
+            viewModel.handleEscape()
+            if !viewModel.searchActive, isSearchFieldFocused {
+                panel?.makeFirstResponder(nil)
+            }
             return true
         }
 
