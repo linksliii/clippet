@@ -10,7 +10,7 @@ final class AppController: NSObject, NSWindowDelegate {
     private let viewModel: ClipboardViewModel
 
     private var panel: ClipboardPanel?
-    private var previewPanel: ClipboardPanel?
+    private var previewPopover: NSPopover?
     private var statusItem: NSStatusItem?
     private var keyMonitor: Any?
     private var mouseMonitor: Any?
@@ -468,9 +468,8 @@ final class AppController: NSObject, NSWindowDelegate {
         idleCleanup?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, let p = self.panel, !p.isVisible else { return }
-            self.previewPanel?.contentView = nil
-            self.previewPanel?.orderOut(nil)
-            self.previewPanel = nil
+            self.previewPopover?.close()
+            self.previewPopover = nil
             ImageStore.purgeFullSize()
         }
         idleCleanup = work
@@ -483,6 +482,7 @@ final class AppController: NSObject, NSWindowDelegate {
         // rest is a position worth remembering.
         guard !isAnimatingIn, !isAnimatingOut, !isFittingPanel else { return }
         guard let p = panel, p.isVisible, let screen = screen(containing: p.frame) else { return }
+        if viewModel.previewItem != nil { viewModel.previewItem = nil }
         fitPanelToScreen(p, screen: screen)
         PanelFrameStore.save(p.frame, on: screen)
     }
@@ -586,56 +586,44 @@ final class AppController: NSObject, NSWindowDelegate {
     }
 
     private func showPreview(_ item: ClipItem) {
-        guard let parent = panel, parent.isVisible else { return }
+        guard let parent = panel, parent.isVisible,
+              let container = parent.contentView else { return }
 
-        let size = NSSize(width: 860, height: 520)
-        let p = previewPanel ?? {
-            let w = ClipboardPanel.transparent(size: size)
-            w.level = .floating
-
-            w.contentView = NSHostingView(rootView: PreviewHost(model: viewModel))
-            previewPanel = w
-            return w
+        let popover = previewPopover ?? {
+            let p = NSPopover()
+            p.behavior = .applicationDefined
+            p.animates = true
+            p.appearance = NSAppearance(named: .darkAqua)
+            p.contentSize = NSSize(width: 860, height: 520)
+            p.contentViewController = NSHostingController(rootView: PreviewHost(model: viewModel))
+            previewPopover = p
+            return p
         }()
 
-        p.setContentSize(size)
+        let anchor = previewAnchor(for: item, in: container)
+        if popover.isShown { popover.close() }
+        popover.show(relativeTo: anchor, of: container, preferredEdge: .maxY)
+    }
 
-        // Put the preview in the free space above the panel instead of centring
-        // it on the panel: the panel is a bottom bar, so a panel-centred preview
-        // hangs off the bottom of the screen. If the panel sits too high, fall
-        // back to the middle of the display.
-        let screen = screen(containing: parent.frame) ?? screenForMouse()
-        let visible = screen.visibleFrame
-        let frameSize = p.frame.size
-        let x = min(max(visible.midX - frameSize.width / 2, visible.minX + 12),
-                    visible.maxX - frameSize.width - 12)
-        let above = visible.maxY - parent.frame.maxY
-        let y: CGFloat
-        if above >= frameSize.height + 24 {
-            y = parent.frame.maxY + (above - frameSize.height) / 2
-        } else {
-            y = min(max(visible.midY - frameSize.height / 2, visible.minY + 12),
-                    visible.maxY - frameSize.height - 12)
+    /// The selected card's rect in the panel content view, so the popover arrow
+    /// lands on the item. Falls back to the panel's top edge before the first
+    /// layout pass has reported card frames.
+    private func previewAnchor(for item: ClipItem, in container: NSView) -> NSRect {
+        let index = viewModel.items.firstIndex { $0.id == item.id } ?? viewModel.selection
+        if let card = viewModel.cardFrames[index], card.width > 1, card.height > 1 {
+            return NSRect(x: card.minX,
+                          y: container.bounds.height - card.maxY,
+                          width: card.width,
+                          height: card.height)
         }
-        p.setFrameOrigin(NSPoint(x: x, y: y))
-        p.alphaValue = 0
-        if p.parent == nil { parent.addChildWindow(p, ordered: .above) }
-        p.makeKeyAndOrderFront(nil)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.16
-            p.animator().alphaValue = 1
-        }
+        return NSRect(x: container.bounds.midX - 40,
+                      y: container.bounds.height - 8,
+                      width: 80,
+                      height: 8)
     }
 
     private func hidePreview() {
-        guard let p = previewPanel else { return }
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.12
-            p.animator().alphaValue = 0
-        }, completionHandler: {
-            p.parent?.removeChildWindow(p)
-            p.orderOut(nil)
-        })
+        previewPopover?.close()
     }
 
     private func syncSelectionToPasteboard() {
@@ -676,7 +664,8 @@ final class AppController: NSObject, NSWindowDelegate {
             guard let self = self, self.isPanelVisible else { return event }
 
             guard let window = event.window,
-                  window === self.panel || window === self.previewPanel else { return event }
+                  window === self.panel
+                    || window === self.previewPopover?.contentViewController?.view.window else { return event }
             return self.handleKey(event) ? nil : event
         }
     }
