@@ -7,9 +7,9 @@ enum ImageStore {
 
     private static let thumbCache: NSCache<NSNumber, NSImage> = {
         let c = NSCache<NSNumber, NSImage>()
-        c.countLimit = 120
+        c.countLimit = 60
 
-        c.totalCostLimit = 32 * 1024 * 1024
+        c.totalCostLimit = 16 * 1024 * 1024
         return c
     }()
 
@@ -21,8 +21,8 @@ enum ImageStore {
 
     private static let dataCache: NSCache<NSNumber, NSData> = {
         let c = NSCache<NSNumber, NSData>()
-        c.countLimit = 12
-        c.totalCostLimit = 24 * 1024 * 1024
+        c.countLimit = 3
+        c.totalCostLimit = 6 * 1024 * 1024
         return c
     }()
 
@@ -59,9 +59,57 @@ enum ImageStore {
     }
 
     static func thumbnail(forID id: Int64, maxDimension: CGFloat = 520) -> NSImage? {
+        thumbnailAndSize(forID: id, maxDimension: maxDimension).image
+    }
+
+    /// Decodes the card thumbnail and reads the original pixel size from the
+    /// same image source, so the card needs neither a second database read nor
+    /// the full-size bytes kept around afterwards.
+    static func thumbnailAndSize(forID id: Int64,
+                                 maxDimension: CGFloat = 520) -> (image: NSImage?, pixelSize: CGSize?) {
         let key = NSNumber(value: id)
-        if let cached = thumbCache.object(forKey: key) { return cached }
+        let knownSize = sizeCache.object(forKey: key)?.sizeValue
+        if let cached = thumbCache.object(forKey: key) {
+            return (cached, knownSize)
+        }
+        guard let data = fullData(forID: id),
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return (nil, knownSize)
+        }
+
+        var pixelSize = knownSize
+        if pixelSize == nil,
+           let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = props[kCGImagePropertyPixelWidth] as? Double,
+           let height = props[kCGImagePropertyPixelHeight] as? Double {
+            pixelSize = CGSize(width: width, height: height)
+            sizeCache.setObject(NSValue(size: pixelSize!), forKey: key)
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            dataCache.removeObject(forKey: key)
+            return (nil, pixelSize)
+        }
+        let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        thumbCache.setObject(image, forKey: key, cost: cg.width * cg.height * 4)
+        // The raw bytes were only needed for this decode; the thumbnail and the
+        // pixel size are enough for the card.
+        dataCache.removeObject(forKey: key)
+        return (image, pixelSize)
+    }
+
+    /// Preview-sized decode: the popover never needs the original bytes decoded
+    /// into a full-resolution NSImage.
+    static func previewImage(forID id: Int64, maxDimension: CGFloat = 1600) -> NSImage? {
+        let key = NSNumber(value: id)
         guard let data = fullData(forID: id) else { return nil }
+        defer { dataCache.removeObject(forKey: key) }
 
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -73,16 +121,18 @@ enum ImageStore {
               let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-        thumbCache.setObject(image, forKey: key, cost: cg.width * cg.height * 4)
-        return image
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 
     static func fullData(forID id: Int64) -> Data? {
         let key = NSNumber(value: id)
         if let cached = dataCache.object(forKey: key) { return cached as Data }
         guard let data = dataProvider?(id) else { return nil }
-        dataCache.setObject(data as NSData, forKey: key, cost: data.count)
+        // Large originals are decoded once and not kept; the thumbnail cache is
+        // what should survive for the next show.
+        if data.count <= 4 * 1024 * 1024 {
+            dataCache.setObject(data as NSData, forKey: key, cost: data.count)
+        }
         return data
     }
 

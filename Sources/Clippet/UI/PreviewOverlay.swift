@@ -115,10 +115,10 @@ struct PreviewOverlay: View {
             guard fullImage == nil, !isLoadingImage else { return }
             isLoadingImage = true
             let id = item.id
-            let data = await Task.detached(priority: .userInitiated) {
-                ImageStore.fullData(forID: id)
+            let image = await Task.detached(priority: .userInitiated) {
+                ImageStore.previewImage(forID: id)
             }.value
-            if let data { fullImage = NSImage(data: data) }
+            if let image { fullImage = image }
             isLoadingImage = false
         }
     }
