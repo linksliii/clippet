@@ -13,6 +13,8 @@ final class AppController: NSObject, NSWindowDelegate {
     private var previewPopover: NSPopover?
     private var statusItem: NSStatusItem?
     private var keyMonitor: Any?
+    private var scrollMonitor: Any?
+    private var wheelAccumulator: CGFloat = 0
     private var mouseMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
 
@@ -98,6 +100,7 @@ final class AppController: NSObject, NSWindowDelegate {
         _ = ensurePanel()
 
         installKeyMonitor()
+        installScrollMonitor()
         installClickMonitor()
         bindSelectionSync()
         bindPreview()
@@ -221,6 +224,10 @@ final class AppController: NSObject, NSWindowDelegate {
         if let monitorRef = keyMonitor {
             NSEvent.removeMonitor(monitorRef)
             keyMonitor = nil
+        }
+        if let monitorRef = scrollMonitor {
+            NSEvent.removeMonitor(monitorRef)
+            scrollMonitor = nil
         }
         if let mouseRef = mouseMonitor {
             NSEvent.removeMonitor(mouseRef)
@@ -485,6 +492,7 @@ final class AppController: NSObject, NSWindowDelegate {
         showGeneration += 1
         isAnimatingIn = false
 
+        wheelAccumulator = 0
         if !animated {
             isAnimatingOut = false
             p.orderOut(nil)
@@ -743,6 +751,38 @@ final class AppController: NSObject, NSWindowDelegate {
                     || window === self.previewPopover?.contentViewController?.view.window else { return event }
             return self.handleKey(event) ? nil : event
         }
+    }
+
+    /// SwiftUI's horizontal ScrollView is backed by a HostingScrollView; a
+    /// plain mouse wheel only reports a vertical delta, which that view ignores.
+    /// Translate the wheel into a horizontal clip-view move.
+    private func installScrollMonitor() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self = self, self.isPanelVisible,
+                  let panel = self.panel,
+                  event.window === panel else { return event }
+            return self.handleScrollWheel(event) ? nil : event
+        }
+    }
+
+    private func handleScrollWheel(_ event: NSEvent) -> Bool {
+        guard let panel = panel, panel.isVisible else { return false }
+        let dx = event.scrollingDeltaX
+        let dy = event.scrollingDeltaY
+        guard abs(dy) > abs(dx), abs(dy) > 0.01 else { return false }
+
+        // SwiftUI's HostingScrollView ignores vertical wheel deltas and a
+        // direct clip-view move gets reset, so drive the list through the
+        // selection instead: selection changes already scroll the row.
+        let points = event.hasPreciseScrollingDeltas ? dy : dy * 40
+        wheelAccumulator += points
+        let steps = Int(wheelAccumulator / 40)
+        guard steps != 0 else { return true }
+        wheelAccumulator -= CGFloat(steps) * 40
+        // Wheel down (negative delta) -> next card.
+        viewModel.moveSelection(-steps)
+        return true
     }
 
     private var isComposingText: Bool {
