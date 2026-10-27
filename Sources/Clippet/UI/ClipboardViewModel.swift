@@ -270,11 +270,36 @@ final class ClipboardViewModel: ObservableObject {
         pb.setString(texts.joined(separator: "\n"), forType: .string)
     }
 
+    var isWheelScrolling = false
+    private var wheelHadPreview = false
+
+    func beginWheelScrolling() {
+        guard !isWheelScrolling else { return }
+        wheelHadPreview = previewItem != nil
+        isWheelScrolling = true
+        // Repositioning and re-decoding the preview for every wheel step is
+        // what makes a fast spin stutter; it comes back when the wheel stops.
+        if wheelHadPreview { previewItem = nil }
+    }
+
+    func finishWheelScrolling() {
+        isWheelScrolling = false
+        if wheelHadPreview {
+            wheelHadPreview = false
+            previewItem = selectedItem
+        }
+    }
+
+    func cancelWheelScrolling() {
+        isWheelScrolling = false
+        wheelHadPreview = false
+    }
+
     func moveSelection(_ delta: Int) {
         guard !items.isEmpty else { return }
         isNavigating = true
         selection = min(max(0, selection + delta), items.count - 1)
-        if previewItem != nil { previewItem = items[selection] }
+        if previewItem != nil, !isWheelScrolling { previewItem = items[selection] }
     }
 
     func jump(to index: Int) {

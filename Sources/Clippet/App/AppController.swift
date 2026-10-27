@@ -15,6 +15,9 @@ final class AppController: NSObject, NSWindowDelegate {
     private var keyMonitor: Any?
     private var scrollMonitor: Any?
     private var wheelAccumulator: CGFloat = 0
+    private var pendingWheelSteps = 0
+    private var wheelApplyScheduled = false
+    private var wheelEndWork: DispatchWorkItem?
     private var mouseMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
 
@@ -229,6 +232,8 @@ final class AppController: NSObject, NSWindowDelegate {
             NSEvent.removeMonitor(monitorRef)
             scrollMonitor = nil
         }
+        wheelEndWork?.cancel()
+        viewModel.cancelWheelScrolling()
         if let mouseRef = mouseMonitor {
             NSEvent.removeMonitor(mouseRef)
             mouseMonitor = nil
@@ -493,6 +498,10 @@ final class AppController: NSObject, NSWindowDelegate {
         isAnimatingIn = false
 
         wheelAccumulator = 0
+        pendingWheelSteps = 0
+        wheelEndWork?.cancel()
+        wheelEndWork = nil
+        viewModel.cancelWheelScrolling()
         if !animated {
             isAnimatingOut = false
             p.orderOut(nil)
@@ -780,9 +789,41 @@ final class AppController: NSObject, NSWindowDelegate {
         let steps = Int(wheelAccumulator / 40)
         guard steps != 0 else { return true }
         wheelAccumulator -= CGFloat(steps) * 40
-        // Wheel down (negative delta) -> next card.
-        viewModel.moveSelection(-steps)
+
+        viewModel.beginWheelScrolling()
+        // Wheel down (negative delta) -> next card. Coalesce into 60 Hz
+        // selection updates instead of one per scroll event.
+        pendingWheelSteps += -steps
+        scheduleWheelApply()
+        scheduleWheelEnd()
         return true
+    }
+
+    private func scheduleWheelApply() {
+        guard !wheelApplyScheduled else { return }
+        wheelApplyScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60.0) { [weak self] in
+            guard let self = self else { return }
+            self.wheelApplyScheduled = false
+            let steps = self.pendingWheelSteps
+            self.pendingWheelSteps = 0
+            guard steps != 0 else { return }
+            self.viewModel.moveSelection(steps)
+        }
+    }
+
+    private func scheduleWheelEnd() {
+        wheelEndWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            let steps = self.pendingWheelSteps
+            self.pendingWheelSteps = 0
+            if steps != 0 { self.viewModel.moveSelection(steps) }
+            self.wheelAccumulator = 0
+            self.viewModel.finishWheelScrolling()
+        }
+        wheelEndWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
     private var isComposingText: Bool {

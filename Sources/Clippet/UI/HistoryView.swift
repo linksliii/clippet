@@ -341,8 +341,12 @@ struct HistoryView: View {
             .onChange(of: model.selection) { _, newValue in
                 guard newValue >= 0, newValue < model.items.count else { return }
 
-                withAnimation(.easeOut(duration: 0.12)) {
+                if model.isWheelScrolling {
                     proxy.scrollTo(model.items[newValue].id)
+                } else {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(model.items[newValue].id)
+                    }
                 }
             }
         }
