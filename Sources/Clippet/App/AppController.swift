@@ -89,6 +89,7 @@ final class AppController: NSObject, NSWindowDelegate {
         applyRetention()
         viewModel.reloadBoards()
         viewModel.reload(resetSelection: true)
+        prewarmRecentThumbnails()
 
         _ = ensurePanel(width: panelPlacement().screen.frame.width)
 
@@ -262,11 +263,14 @@ final class AppController: NSObject, NSWindowDelegate {
             let board = self.repository.defaultBoard()
             guard let content = ContentClassifier.classify(snapshot) else { return }
             if self.settings.ignoreConfidential, content.tags.contains("secret") { return }
-            self.repository.insert(content,
-                                   sourceApp: bundleID,
-                                   sourceName: name,
-                                   sourceTint: tint,
-                                   boardID: board.id)
+            let inserted = self.repository.insert(content,
+                                                  sourceApp: bundleID,
+                                                  sourceName: name,
+                                                  sourceTint: tint,
+                                                  boardID: board.id)
+            if content.kind == .image, let inserted = inserted, inserted != 0 {
+                ImageStore.prewarm(ids: [inserted])
+            }
             DispatchQueue.main.async {
                 if self.settings.playSound { NSSound(named: "Tink")?.play() }
                 self.applyRetention()
@@ -1053,6 +1057,13 @@ final class AppController: NSObject, NSWindowDelegate {
             rootView: SettingsView(settings: settings, knownApps: apps, initialPane: initial))
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func prewarmRecentThumbnails() {
+        let ids = viewModel.items.prefix(12).compactMap { item in
+            item.kind == .image ? item.id : nil
+        }
+        ImageStore.prewarm(ids: ids)
     }
 
     private func pasteSingle(_ item: ClipItem) {

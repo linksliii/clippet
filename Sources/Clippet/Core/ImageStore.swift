@@ -42,6 +42,19 @@ enum ImageStore {
         }
     }
 
+    /// Decodes the thumbnails of recent screenshots while the app is idle, so
+    /// the next panel show has them in the cache instead of decoding them
+    /// while the slide-in animation is running.
+    static func prewarm(ids: [Int64]) {
+        let missing = ids.filter { thumbCache.object(forKey: NSNumber(value: $0)) == nil }
+        guard !missing.isEmpty else { return }
+        decodeQueue.async {
+            for id in missing {
+                _ = thumbnailAndSize(forID: id)
+            }
+        }
+    }
+
     static func previewImageAsync(forID id: Int64,
                                   maxDimension: CGFloat = 1600) async -> NSImage? {
         await withCheckedContinuation { continuation in

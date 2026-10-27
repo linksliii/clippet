@@ -11,7 +11,13 @@ APP="$ROOT/build/Clippet.app"
 BIN="$ROOT/.build/$CONFIG/Clippet"
 
 echo "==> building ($CONFIG)"
-swift build -c "$CONFIG" 2>&1 | grep -vE "xcrun:|XCTest|^\s*$" || true
+BUILD_LOG="$ROOT/.build/build-$CONFIG.log"
+if ! swift build -c "$CONFIG" >"$BUILD_LOG" 2>&1; then
+    echo "error: build failed" >&2
+    tail -40 "$BUILD_LOG" >&2
+    exit 1
+fi
+grep -vE "xcrun:|XCTest|^\s*$" "$BUILD_LOG" | tail -20 || true
 
 if [[ ! -f "$BIN" ]]; then
     echo "error: binary missing at $BIN" >&2
