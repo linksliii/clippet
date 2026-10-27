@@ -69,7 +69,11 @@ enum PasteboardWriter {
     }
 
     static func sendPaste() {
-        guard canSendKeystrokes else { return }
+        guard canSendKeystrokes else {
+            NSLog("Clippet: accessibility permission missing; cannot send ⌘V")
+            requestAccessibility()
+            return
+        }
         let source = CGEventSource(stateID: .combinedSessionState)
         let vKey = CGKeyCode(kVK_ANSI_V)
         let down = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
@@ -91,11 +95,36 @@ enum PasteboardWriter {
             completion?()
             return
         }
+        guard let app = app, !app.isTerminated else {
+            completion?()
+            return
+        }
         activate(app)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            sendPaste()
+        waitUntilFrontmost(app, timeout: 0.5) {
+            if app.isActive { sendPaste() }
             completion?()
         }
+    }
+
+    private static func waitUntilFrontmost(_ app: NSRunningApplication,
+                                           timeout: TimeInterval,
+                                           then: @escaping () -> Void) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func poll() {
+            if app.isActive
+                || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
+                || Date() >= deadline {
+                then()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: poll)
+        }
+        poll()
+    }
+
+    static func requestAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
     }
 }
 

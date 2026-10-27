@@ -451,9 +451,12 @@ final class AppController: NSObject, NSWindowDelegate {
 #endif
     }
 
-    private func hidePanel() {
+    private func hidePanel(completion: (() -> Void)? = nil) {
         if viewModel.previewItem != nil { viewModel.previewItem = nil }
-        guard let p = panel, p.isVisible else { return }
+        guard let p = panel, p.isVisible else {
+            completion?()
+            return
+        }
 
         showGeneration += 1
         isAnimatingIn = false
@@ -470,7 +473,9 @@ final class AppController: NSObject, NSWindowDelegate {
             p.orderOut(nil)
             p.alphaValue = 1.0
             self?.isAnimatingOut = false
+            ImageStore.purgeFullSize()
             self?.scheduleIdleCleanup()
+            completion?()
         })
     }
 
@@ -714,6 +719,14 @@ final class AppController: NSObject, NSWindowDelegate {
         // While previewing, up/down move the selection and the popover follows.
         if viewModel.previewItem != nil, event.keyCode == 125 || event.keyCode == 126 {
             viewModel.moveSelection(event.keyCode == 126 ? -1 : 1)
+            return true
+        }
+
+        // Return belongs to the panel, not to whichever view has focus: after
+        // clicking a card the search field is no longer first responder.
+        if !isComposingText, !viewModel.filtersOpen,
+           event.keyCode == 36 || event.keyCode == 76 {
+            viewModel.commitSelection()
             return true
         }
 
@@ -1020,15 +1033,21 @@ final class AppController: NSObject, NSWindowDelegate {
     }
 
     private func pasteSingle(_ item: ClipItem) {
-
         let plainText = settings.alwaysPlainText || NSEvent.modifierFlags.contains(.option)
-        hidePanel()
-        monitor.suppressCurrentState()
-        if settings.pasteToActiveApp {
-            PasteboardWriter.paste(item, into: targetApp, plainTextOnly: plainText)
-        } else {
 
+        guard settings.pasteToActiveApp else {
             try? PasteboardWriter.write(item, plainTextOnly: plainText)
+            monitor.suppressCurrentState()
+            hidePanel()
+            return
+        }
+
+        // Give the panel time to leave the screen before handing focus back:
+        // posting ⌘V while the panel is still key sends it to the wrong window.
+        hidePanel { [weak self] in
+            guard let self = self else { return }
+            PasteboardWriter.paste(item, into: self.targetApp, plainTextOnly: plainText)
+            self.monitor.suppressCurrentState()
         }
     }
 
@@ -1038,8 +1057,9 @@ final class AppController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        hidePanel()
-        pasteSequentially(queued, index: 0)
+        hidePanel { [weak self] in
+            self?.pasteSequentially(queued, index: 0)
+        }
     }
 
     private func pasteSequentially(_ queued: [ClipItem], index: Int) {
