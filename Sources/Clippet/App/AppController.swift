@@ -841,6 +841,17 @@ final class AppController: NSObject, NSWindowDelegate {
             return true
         }
 
+        // Plain left/right move the card selection even while the search field
+        // has focus; otherwise the field editor eats them for caret movement
+        // and ←/→ never reach the panel. Modified arrows stay with the field.
+        let navModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+        if !isComposingText,
+           event.modifierFlags.intersection(navModifiers).isEmpty,
+           event.keyCode == 123 || event.keyCode == 124 {
+            viewModel.moveSelection(event.keyCode == 123 ? -1 : 1)
+            return true
+        }
+
         // Return belongs to the panel, not to whichever view has focus: after
         // clicking a card the search field is no longer first responder.
         if !isComposingText, !viewModel.filtersOpen,
