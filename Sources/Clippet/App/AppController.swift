@@ -600,9 +600,24 @@ final class AppController: NSObject, NSWindowDelegate {
 
         p.setContentSize(size)
 
-        let origin = NSPoint(x: parent.frame.midX - size.width / 2,
-                             y: parent.frame.midY - size.height / 2)
-        p.setFrameOrigin(origin)
+        // Put the preview in the free space above the panel instead of centring
+        // it on the panel: the panel is a bottom bar, so a panel-centred preview
+        // hangs off the bottom of the screen. If the panel sits too high, fall
+        // back to the middle of the display.
+        let screen = screen(containing: parent.frame) ?? screenForMouse()
+        let visible = screen.visibleFrame
+        let frameSize = p.frame.size
+        let x = min(max(visible.midX - frameSize.width / 2, visible.minX + 12),
+                    visible.maxX - frameSize.width - 12)
+        let above = visible.maxY - parent.frame.maxY
+        let y: CGFloat
+        if above >= frameSize.height + 24 {
+            y = parent.frame.maxY + (above - frameSize.height) / 2
+        } else {
+            y = min(max(visible.midY - frameSize.height / 2, visible.minY + 12),
+                    visible.maxY - frameSize.height - 12)
+        }
+        p.setFrameOrigin(NSPoint(x: x, y: y))
         p.alphaValue = 0
         if p.parent == nil { parent.addChildWindow(p, ordered: .above) }
         p.makeKeyAndOrderFront(nil)
