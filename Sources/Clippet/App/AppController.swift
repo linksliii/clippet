@@ -784,11 +784,15 @@ final class AppController: NSObject, NSWindowDelegate {
         // SwiftUI's HostingScrollView ignores vertical wheel deltas and a
         // direct clip-view move gets reset, so drive the list through the
         // selection instead: selection changes already scroll the row.
+        // 80 points per card: a classic wheel notch reports 40, so it takes
+        // two notches per card. The previous 40 made one notch jump a whole
+        // card, which felt twitchy; precise trackpads now need 80pt per card.
+        let pointsPerCard: CGFloat = 80
         let points = event.hasPreciseScrollingDeltas ? dy : dy * 40
         wheelAccumulator += points
-        let steps = Int(wheelAccumulator / 40)
+        let steps = Int(wheelAccumulator / pointsPerCard)
         guard steps != 0 else { return true }
-        wheelAccumulator -= CGFloat(steps) * 40
+        wheelAccumulator -= CGFloat(steps) * pointsPerCard
 
         viewModel.beginWheelScrolling()
         // Wheel down (negative delta) -> next card. Coalesce into 60 Hz
