@@ -21,12 +21,17 @@ enum PasteboardWriter {
 
         switch item.kind {
         case .image:
-
             guard let data = item.data ?? ImageStore.fullData(forID: item.id) else {
                 throw PasteError.missingPayload
             }
-            pasteboard.setData(data, forType: .png)
-            if let rep = NSBitmapImageRep(data: data), let tiff = rep.tiffRepresentation {
+            // Store the image in its real format. Screenshots copied from the
+            // system pasteboard are TIFF; writing those bytes as public.png
+            // makes every PNG-first target (browsers, chat inputs) fail.
+            let type = imagePasteboardType(for: data)
+            pasteboard.setData(data, forType: type)
+            if type != .tiff,
+               let rep = NSBitmapImageRep(data: data),
+               let tiff = rep.tiffRepresentation {
                 pasteboard.setData(tiff, forType: .tiff)
             }
 
@@ -53,6 +58,17 @@ enum PasteboardWriter {
             guard let text = fullText(item) else { throw PasteError.missingPayload }
             pasteboard.setString(text, forType: .string)
         }
+    }
+
+    private static func imagePasteboardType(for data: Data) -> NSPasteboard.PasteboardType {
+        if let source = CGImageSourceCreateWithData(data as CFData, nil),
+           let uti = CGImageSourceGetType(source) {
+            return NSPasteboard.PasteboardType(uti as String)
+        }
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return .png }
+        if data.starts(with: [0x4D, 0x4D, 0x00, 0x2A])
+            || data.starts(with: [0x49, 0x49, 0x2A, 0x00]) { return .tiff }
+        return .tiff
     }
 
     static func activate(_ app: NSRunningApplication?) {
@@ -115,7 +131,7 @@ enum PasteboardWriter {
             }
             // Let the target's key window and first responder settle before
             // injecting the keystroke.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
                 sendPaste()
                 completion?()
             }

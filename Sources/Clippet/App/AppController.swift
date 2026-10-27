@@ -477,7 +477,7 @@ final class AppController: NSObject, NSWindowDelegate {
 #endif
     }
 
-    private func hidePanel(completion: (() -> Void)? = nil) {
+    private func hidePanel(animated: Bool = true, completion: (() -> Void)? = nil) {
         if viewModel.previewItem != nil { viewModel.previewItem = nil }
         guard let p = panel, p.isVisible else {
             completion?()
@@ -486,8 +486,19 @@ final class AppController: NSObject, NSWindowDelegate {
 
         showGeneration += 1
         isAnimatingIn = false
-        isAnimatingOut = true
 
+        if !animated {
+            isAnimatingOut = false
+            p.orderOut(nil)
+            p.alphaValue = 1.0
+            ImageStore.purgeFullSize()
+            scheduleIdleCleanup()
+            PasteDebug.log("panel ordered out (instant)")
+            completion?()
+            return
+        }
+
+        isAnimatingOut = true
         let visible = (screen(containing: p.frame) ?? screenForMouse()).visibleFrame
         let off = offscreenFrame(for: p.frame, in: visible)
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -1080,7 +1091,7 @@ final class AppController: NSObject, NSWindowDelegate {
 
         // Give the panel time to leave the screen before handing focus back:
         // posting ⌘V while the panel is still key sends it to the wrong window.
-        hidePanel { [weak self] in
+        hidePanel(animated: false) { [weak self] in
             guard let self = self else { return }
             PasteDebug.log("hide done, pasting")
             PasteboardWriter.paste(item, into: destination, plainTextOnly: plainText)
@@ -1094,7 +1105,7 @@ final class AppController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        hidePanel { [weak self] in
+        hidePanel(animated: false) { [weak self] in
             self?.pasteSequentially(queued, index: 0)
         }
     }
