@@ -1,6 +1,55 @@
 import AppKit
 import SwiftUI
 
+/// Decodes the thumbnail and reads the pixel size off the main thread. The
+/// first show after an idle period used to do both inside the card body, which
+/// stalled the whole panel while several screenshots were decoded.
+private struct CardImage: View {
+    let item: ClipItem
+    @State private var image: NSImage?
+    @State private var sizeLabel: String?
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            if let shown = image ?? ImageStore.cachedThumbnail(forID: item.id) {
+                Image(nsImage: shown)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .padding(6)
+            } else {
+                Image(systemName: "photo")
+                    .font(.system(size: 26))
+                    .foregroundStyle(.white.opacity(0.25))
+            }
+            if let sizeLabel {
+                Text(sizeLabel)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.black.opacity(0.55)))
+                    .padding(.bottom, 8)
+            }
+        }
+        .task(id: item.id) {
+            image = nil
+            sizeLabel = nil
+            let id = item.id
+            let loaded = await Task.detached(priority: .userInitiated) { () -> (NSImage?, String?) in
+                let thumbnail = ImageStore.thumbnail(forID: id)
+                var label: String?
+                if let data = ImageStore.fullData(forID: id),
+                   let size = ImageStore.pixelSize(forID: id, data: data) {
+                    label = "\(Int(size.width)) × \(Int(size.height))"
+                }
+                return (thumbnail, label)
+            }.value
+            image = loaded.0
+            sizeLabel = loaded.1
+        }
+    }
+}
+
 struct ClipCard: View {
     let item: ClipItem
     let index: Int
@@ -185,27 +234,7 @@ struct ClipCard: View {
     private var imageBody: some View {
         ZStack(alignment: .bottom) {
             CheckerboardView()
-            Group {
-                if let nsImage = ImageStore.thumbnail(forID: item.id) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .padding(6)
-                } else {
-                    Image(systemName: "photo")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.white.opacity(0.25))
-                }
-            }
-            if let size = imageSizeLabel {
-                Text(size)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.55)))
-                    .padding(.bottom, 8)
-            }
+            CardImage(item: item)
         }
     }
 
@@ -221,12 +250,6 @@ struct ClipCard: View {
                 Color.gray
             }
         }
-    }
-
-    private var imageSizeLabel: String? {
-        guard let data = ImageStore.fullData(forID: item.id),
-              let size = ImageStore.pixelSize(forID: item.id, data: data) else { return nil }
-        return "\(Int(size.width)) × \(Int(size.height))"
     }
 
     private var fileBody: some View {

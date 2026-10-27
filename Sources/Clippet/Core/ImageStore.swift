@@ -52,6 +52,12 @@ enum ImageStore {
         return size
     }
 
+    /// Cache-only lookup, for drawing already-decoded thumbnails without a
+    /// decode (or a database read) on the main thread.
+    static func cachedThumbnail(forID id: Int64) -> NSImage? {
+        thumbCache.object(forKey: NSNumber(value: id))
+    }
+
     static func thumbnail(forID id: Int64, maxDimension: CGFloat = 520) -> NSImage? {
         let key = NSNumber(value: id)
         if let cached = thumbCache.object(forKey: key) { return cached }
